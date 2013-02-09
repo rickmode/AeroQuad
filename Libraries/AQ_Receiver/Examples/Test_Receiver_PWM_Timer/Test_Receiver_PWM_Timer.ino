@@ -3,7 +3,48 @@
   NOTE: Timer 5 is only available on Arduino Megas.
 */
 #include <PinChangeInt.h>
-#include <timer5.h>
+
+const uint8_t clockMode = 0; // clock mode 0
+#define PRESCALING 8
+const uint8_t clockSelectBits = _BV(CS51); // 8x prescaling
+
+inline void timer5_init()
+{
+  // initialize to mode 0: count from 0 to 0xFFFF the restart at 0
+  //   overflow flag TOV5 set when clock restarts at 0
+  TCCR5A = 0;
+  TCCR5B = clockMode;
+}
+
+inline void timer5_start()
+{
+  // start by setting desired clock select bits
+  TCCR5B |= clockSelectBits;
+}
+
+inline void timer5_stop()
+{
+  // stop by clearing all clock select bits
+  TCCR5B &= ~(_BV(CS50) | _BV(CS51) | _BV(CS52));
+}
+
+inline void timer5_reset()
+{
+  TCNT5 = 0;
+}
+
+#define MICROS_PER_SECOND (1000UL * 1000UL)
+#define MICROS_PER_TIC (F_CPU / PRESCALING / MICROS_PER_SECOND)
+
+inline uint16_t timer5_micros()
+{
+  return TCNT5 / MICROS_PER_TIC;
+}
+
+inline void timer5_enable_overflow_interrupt()
+{
+  TIMSK5 = _BV(TOIE5);
+}
 
 #define LASTCHANNEL 7
 
@@ -29,12 +70,9 @@ void resetMinMax()
 
 uint16_t getPulseWidth(uint8_t channel)
 {
-  uint8_t sreg;
-  uint16_t pw;
-
-  sreg = SREG; // save interrupt status registers
+  uint8_t sreg = SREG; // save interrupt status registers
   cli(); // stop interrupts
-  pw = pulseWidth[channel];
+  uint16_t pw = pulseWidth[channel];
   SREG = sreg; // restore interrupts to prior status
   
   return pw;
@@ -42,19 +80,19 @@ uint16_t getPulseWidth(uint8_t channel)
 
 void rise()
 {
-  timer5_stop(); // ***
+  timer5_stop();
   timer5_reset();
   timer5_start();
   
   PCintPort::detachInterrupt(pin[currentChannel]);
   PCintPort::attachInterrupt(pin[currentChannel], fall, FALLING);
 
-  lost[currentChannel] = false; // ***
+  lost[currentChannel] = false;
 }
 
 void fall()
 {
-  pulseWidth[currentChannel] = timer5_isr_micros();
+  pulseWidth[currentChannel] = timer5_micros();
   timer5_stop();
   
   PCintPort::detachInterrupt(pin[currentChannel]);
@@ -62,24 +100,14 @@ void fall()
   PCintPort::attachInterrupt(pin[currentChannel], rise, RISING);
 
   // start timer again to catch dead pin via timer overflow interrupt
-  timer5_reset(); // ***
-  timer5_start(); // ***
+  timer5_reset();
+  timer5_start();
 }
-
-volatile boolean timerOverflow = false;
 
 // timer overflow interrupt
 // give up on current pin and move to next pin
 ISR(TIMER5_OVF_vect)
 {
-  timerOverflow = true;
-}
-
-void handleTimerOverflow()
-{
-  uint8_t sreg = SREG;
-  cli();
-
   lost[currentChannel] = true;
   pulseWidth[currentChannel] = 0;
   timer5_stop();
@@ -90,10 +118,6 @@ void handleTimerOverflow()
   
   timer5_reset();
   timer5_start();
-  
-  timerOverflow = false;
-  
-  SREG = sreg;
 }
 
 void setup()
@@ -103,11 +127,10 @@ void setup()
 
   resetMinMax();
 
-  //timer5_init(2200);
-  timer5_init(25000); //***
-  timer5_stop();
+  timer5_init();
   timer5_reset();
-  timer5_start(); //***
+  timer5_enable_overflow_interrupt();
+  timer5_start();
 
   for (uint8_t i = 0; i < LASTCHANNEL; ++i)
   {
@@ -115,9 +138,6 @@ void setup()
     lost[i] = false;
     pinMode(pin[i], INPUT);
   }
-
-  // enable overflow timer interrupt
-  TIMSK5 = _BV(TOIE5); //***
 
   // attach a PinChange Interrupt to our first pin
   PCintPort::attachInterrupt(pin[currentChannel], rise, RISING);
@@ -160,9 +180,6 @@ uint32_t duration = 0;
 
 void loop() 
 {
-  if (timerOverflow)
-    handleTimerOverflow();
-  
   const uint32_t now = millis();
   const uint8_t channel = currentChannel;
   if (channel != lastChannel)
@@ -200,14 +217,10 @@ void loop()
     Serial.print("\nMin/max reset - last cycle duration: ");
     Serial.print(duration);
     Serial.println("ms\n");
-    Serial.print("clockSelectBits = ");
-    Serial.println(clockSelectBits);
-    Serial.print("scale = ");
-    Serial.println(scale);
-    Serial.print("F_CPU = ");
-    Serial.println(F_CPU);
-    Serial.print("ICR5 = ");
-    Serial.println(ICR5);
+    Serial.print("Micros per tic: ");
+    Serial.println(MICROS_PER_TIC);
+    Serial.print("Max micros: ");
+    Serial.println(MICROS_PER_TIC * 65536);
     Serial.println();
   }
 }

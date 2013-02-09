@@ -58,8 +58,6 @@ typedef struct {
 
 volatile static tPinTimingData pinData[MAX_NB_CHANNEL];
 
-volatile static uint32_t isrCount = 0;
-
 static uint8_t inputPort;
 
 ISR(PCINT2_vect) {
@@ -69,8 +67,6 @@ ISR(PCINT2_vect) {
   uint8_t pin;
   uint16_t currentTime;
   uint16_t time;
-
-  ++isrCount;
 
   curr = *portInputRegister(inputPort);
   mask = curr ^ PCintLast;

@@ -2,7 +2,7 @@
 #define _AEROQUAD_RECEIVER_MEGA_TIMER_H_
 
 /*
-  Reads PWM receiver using PinChangeInt and timer5.
+  Reads PWM receiver using PinChangeInt and timer 5.
   Timer 5 is only available on Arduino Megas.
   Timer 5 is the same timer used by the Receiver_HWPPM code
   (which cannot be used at the same time as this of course).
@@ -14,8 +14,42 @@
 
 #include "Receiver.h"
 #include <PinChangeInt.h>
-#include <timer5.h>
 
+const uint8_t clockMode = 0; // clock mode 0
+#define PRESCALING 8
+const uint8_t clockSelectBits = _BV(CS51); // 8x prescaling
+
+inline void timer5_init() {
+  // initialize to mode 0: count from 0 to 0xFFFF the restart at 0
+  //   overflow flag TOV5 set when clock restarts at 0
+  TCCR5A = 0;
+  TCCR5B = clockMode;
+}
+
+inline void timer5_start() {
+  // start by setting desired clock select bits
+  TCCR5B |= clockSelectBits;
+}
+
+inline void timer5_stop() {
+  // stop by clearing all clock select bits
+  TCCR5B &= ~(_BV(CS50) | _BV(CS51) | _BV(CS52));
+}
+
+inline void timer5_reset() {
+  TCNT5 = 0;
+}
+
+#define MICROS_PER_SECOND (1000UL * 1000UL)
+#define MICROS_PER_TIC (F_CPU / PRESCALING / MICROS_PER_SECOND)
+
+inline uint16_t timer5_micros() {
+  return TCNT5 / MICROS_PER_TIC;
+}
+
+inline void timer5_enable_overflow_interrupt() {
+  TIMSK5 = _BV(TOIE5);
+}
 
 // receiver pins are A8 (62) to A15 (70)
 
@@ -29,50 +63,65 @@
 
 
 volatile uint32_t channelPulse[MAX_NB_CHANNEL];
-volatile uint8_t trackedPin = 0;
+volatile uint8_t currentChannel = 0;
 
 void channelRise();
 void channelFall();
 
-
-void channelRise()
-{
+void channelRise() {
+  timer5_stop();
   timer5_reset();
   timer5_start();
 
-  PCintPort::detachInterrupt(receiverPin[trackedPin]);
-  PCintPort::attachInterrupt(receiverPin[trackedPin], channelFall, FALLING);
+  PCintPort::detachInterrupt(receiverPin[currentChannel]);
+  PCintPort::attachInterrupt(receiverPin[currentChannel], channelFall, FALLING);
 }
 
-void channelFall()
-{
-  channelPulse[trackedPin] = timer5_isr_micros();
+void channelFall() {
+  channelPulse[currentChannel] = timer5_micros();
   timer5_stop();
   
-  PCintPort::detachInterrupt(receiverPin[trackedPin]);
-  trackedPin = (++trackedPin) % lastReceiverChannel;
-  PCintPort::attachInterrupt(receiverPin[trackedPin], channelRise, RISING);
+  PCintPort::detachInterrupt(receiverPin[currentChannel]);
+  currentChannel = (++currentChannel) % lastReceiverChannel;
+  PCintPort::attachInterrupt(receiverPin[currentChannel], channelRise, RISING);
+
+  // start timer again to catch dead pin via timer overflow interrupt
+  timer5_reset();
+  timer5_start();
 }
 
-void initializeReceiver(int nbChannel)
-{
+// timer overflow interrupt
+// give up on current pin and move to next pin
+ISR(TIMER5_OVF_vect) {
+  channelPulse[currentChannel] = 0;
+  timer5_stop();
+  
+  PCintPort::detachInterrupt(receiverPin[currentChannel]);
+  currentChannel = (++currentChannel) % LASTCHANNEL;
+  PCintPort::attachInterrupt(receiverPin[currentChannel], channelRise, RISING);
+  
+  timer5_reset();
+  timer5_start();
+}
+
+void initializeReceiver(int nbChannel) {
   initializeReceiverParam(nbChannel);
   
   for (uint8_t i; i < MAX_NB_CHANNEL; ++i)
     channelPulse[i] = 0;
 
-  timer5_init(2200);
-  timer5_stop();
+  timer5_init();
   timer5_reset();
+  timer5_enable_overflow_interrupt();
+  timer5_start();
 
   for (uint8_t i=0; i < nbChannel; ++i)
     pinMode(receiverPin[i], INPUT);
 
-  PCintPort::attachInterrupt(receiverPin[trackedPin], channelRise, RISING); // attach a PinChange Interrupt to our first pin
+  PCintPort::attachInterrupt(receiverPin[currentChannel], channelRise, RISING); // attach a PinChange Interrupt to our first pin
 }
 
-int getRawChannelValue(byte channel)
-{
+int getRawChannelValue(byte channel) {
   uint8_t sreg;
   uint32_t t;
 
@@ -83,9 +132,5 @@ int getRawChannelValue(byte channel)
   
   return t;
 }
-
-void setChannelValue(byte channel,int value)
-{
-}  
 
 #endif // _AEROQUAD_RECEIVER_MEGA_TIMER_H_

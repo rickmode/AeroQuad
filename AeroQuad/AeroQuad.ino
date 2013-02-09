@@ -1095,7 +1095,6 @@
   #include <Receiver_328p.h>
 #elif defined(RECEIVER_MEGA)
   #if defined(ReceiverTimerPWM)
-    #include <timer5.h>
     #include <PinChangeInt.h>
     #include <Receiver_MEGA_Timer.h>
   #elif defined(ReceiverHWPWM)

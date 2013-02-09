@@ -32,7 +32,9 @@
 //#include <Receiver_HWPPM.h> // for AeroQuad shield v1.x with Arduino Mega and shield v2.x with hardware mod                       
 
 //PWM receivers
-#include <Receiver_MEGA_HWPWM.h>  // for AeroQuad shield v1.x with Arduino Mega and shield v2.x using a standard PWM receiver
+//#include <Receiver_MEGA_HWPWM.h>  // for AeroQuad shield v1.x with Arduino Mega and shield v2.x using a standard PWM receiver
+#include <PinChangeInt.h> // required by Receiver_MEGA_Timer.h
+#include <Receiver_MEGA_Timer.h>
 //#include <Receiver_MEGA.h>   // for AeroQuad shield v1.x with Arduino Mega and shield v2.x using a standard PWM receiver
 //#include <Receiver_328p.h> // for AeroQuad shield v1.x with Arduino Due/Uno and mini shield v1.0 using a standard PWM receiver
 
@@ -46,22 +48,19 @@
   #include <Receiver_SBUS.h>
 #endif
 
-unsigned long fastTimer = 0;
-unsigned long slowTimer = 0;
-
-int maxReceiver[LASTCHANNEL];
-int minReceiver[LASTCHANNEL];
+uint16_t maxPulseWidth[LASTCHANNEL];
+uint16_t minPulseWidth[LASTCHANNEL];
 
 #define MAX_CHANNEL (AUX5 + 1)
 
 const char* channelName[MAX_CHANNEL];
 
-void resetMinMaxChannel()
+void resetMinMax()
 {
-  for (int i = 0; i < LASTCHANNEL; ++i)
+  for (uint8_t i = 0; i < LASTCHANNEL; ++i)
   {
-    maxReceiver[i] = -1;
-    minReceiver[i] = 10000;
+    maxPulseWidth[i] = 0;
+    minPulseWidth[i] = 65535;
   }
 }
 
@@ -73,7 +72,7 @@ void setup()
   initializeReceiver(LASTCHANNEL);   
   receiverXmitFactor = 1.0;
   
-  resetMinMaxChannel();
+  resetMinMax();
 
   channelName[XAXIS] = "Roll";
   channelName[YAXIS] = "Pitch";
@@ -89,18 +88,18 @@ void setup()
   Serial.println("setup done");
 }
 
-void printChannel(const int i)
+void printChannel(const uint8_t i)
 {
   Serial.print(channelName[i]);
   Serial.print(": ");
   Serial.print(receiverCommand[i]);
-  if (minReceiver >= 0)
+  if (minPulseWidth >= 0)
   {
     Serial.print(" (");
-    Serial.print(minReceiver[i]);
+    Serial.print(minPulseWidth[i]);
     Serial.print(",");
-    Serial.print(maxReceiver[i]);
-    const int diff = maxReceiver[i] - minReceiver[i];
+    Serial.print(maxPulseWidth[i]);
+    const int diff = maxPulseWidth[i] - minPulseWidth[i];
     Serial.print(",");
     Serial.print(diff);
     Serial.print(")");
@@ -112,9 +111,12 @@ void printChannel(const int i)
 #define MILLIS_PER_SEC 1000
 #define RESET_MILLIS (RESET_SECS * 1000)
 
+uint32_t fastTimer = 0;
+uint32_t slowTimer = 0;
+
 void loop() 
 {
-  const unsigned long now = millis();
+  const uint32_t now = millis();
 
   //if ((now - fastTimer) >= 50) // 20Hz
   if ((now - fastTimer) >= 100)
@@ -127,14 +129,14 @@ void loop()
 
     // readReceiver();
     
-    for (int i = 0; i < LASTCHANNEL; ++i)
+    for (uint8_t i = 0; i < LASTCHANNEL; ++i)
     {
-      // const int v = receiverCommand[i];
-      const int v = receiverCommand[i] = getRawChannelValue(i);
-      if (v < minReceiver[i])
-        minReceiver[i] = v;
-      if (v > maxReceiver[i])
-        maxReceiver[i] = v;
+      // const int pw = receiverCommand[i];
+      const int pw = receiverCommand[i] = getRawChannelValue(i);
+      if (pw < minPulseWidth[i])
+        minPulseWidth[i] = pw;
+      if (pw > maxPulseWidth[i])
+        maxPulseWidth[i] = pw;
         
       printChannel(i);
     }
@@ -143,22 +145,9 @@ void loop()
   
   if ((now - slowTimer) >= RESET_MILLIS)
   {
-    uint8_t sreg = SREG;
-    cli();
-    uint32_t isrs = isrCount;
-    isrCount = 0;
-    SREG = sreg;
-    
-    uint32_t freq = isrs / RESET_SECS;
-    
     slowTimer = now;
-    resetMinMaxChannel();
-    Serial.println("\nMin/max reset");
-    Serial.print("Interrupts: ");
-    Serial.print(isrs);
-    Serial.print(", freq: ");
-    Serial.print(freq);
-    Serial.println("\n");
+    resetMinMax();
+    Serial.println("\nMin/max reset\n");
   }
 }
 
