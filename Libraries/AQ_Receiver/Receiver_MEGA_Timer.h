@@ -107,7 +107,7 @@ ISR(TIMER5_OVF_vect) {
 void initializeReceiver(int nbChannel) {
   initializeReceiverParam(nbChannel);
   
-  for (uint8_t i; i < MAX_NB_CHANNEL; ++i)
+  for (uint8_t i = 0; i < MAX_NB_CHANNEL; ++i)
     channelPulse[i] = 0;
 
   timer5_init();
@@ -115,21 +115,17 @@ void initializeReceiver(int nbChannel) {
   timer5_enable_overflow_interrupt();
   timer5_start();
 
-  for (uint8_t i=0; i < nbChannel; ++i)
+  for (uint8_t i = 0; i < nbChannel; ++i)
     pinMode(receiverPin[i], INPUT);
 
   PCintPort::attachInterrupt(receiverPin[currentChannel], channelRise, RISING); // attach a PinChange Interrupt to our first pin
 }
 
 int getRawChannelValue(byte channel) {
-  uint8_t sreg;
-  uint32_t t;
-
-  sreg = SREG; // save interrupt status registers
+  uint8_t sreg = SREG; // save interrupt status registers
   cli(); // stop interrupts
-  t = channelPulse[channel];
+  uint32_t t = channelPulse[channel];
   SREG = sreg; // restore interrupts to prior status
-  
   return t;
 }
 
