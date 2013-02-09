@@ -22,10 +22,7 @@
 #include <GlobalDefined.h>
 
 //Choose how many channels you have available (6, 8 or 10)
-
-//#define LASTCHANNEL 6
-#define LASTCHANNEL 8
-//#define LASTCHANNEL 10
+#define LASTCHANNEL 7
 
 // Uncomment only one of the following receiver types depending on the type you are using
 // see http://aeroquad.com/showwiki.php?title=Connecting+the+receiver+to+your+AeroQuad+board
@@ -33,13 +30,14 @@
 //PPM receivers
 //#include <Receiver_PPM.h>   // for Arduino boards using a PPM receiver
 //#include <Receiver_HWPPM.h> // for AeroQuad shield v1.x with Arduino Mega and shield v2.x with hardware mod                       
-                              
+
 //PWM receivers
+#include <Receiver_MEGA_HWPWM.h>  // for AeroQuad shield v1.x with Arduino Mega and shield v2.x using a standard PWM receiver
 //#include <Receiver_MEGA.h>   // for AeroQuad shield v1.x with Arduino Mega and shield v2.x using a standard PWM receiver
 //#include <Receiver_328p.h> // for AeroQuad shield v1.x with Arduino Due/Uno and mini shield v1.0 using a standard PWM receiver
 
 //Futaba sBus
-#define sBus // for sBus receiver
+//#define sBus // for sBus receiver
 
 // -------------  End of configuration ----------------- //
 
@@ -48,58 +46,119 @@
   #include <Receiver_SBUS.h>
 #endif
 
-unsigned long timer;
+unsigned long fastTimer = 0;
+unsigned long slowTimer = 0;
 
-void setup() {
-  
+int maxReceiver[LASTCHANNEL];
+int minReceiver[LASTCHANNEL];
+
+#define MAX_CHANNEL (AUX5 + 1)
+
+const char* channelName[MAX_CHANNEL];
+
+void resetMinMaxChannel()
+{
+  for (int i = 0; i < LASTCHANNEL; ++i)
+  {
+    maxReceiver[i] = -1;
+    minReceiver[i] = 10000;
+  }
+}
+
+void setup()
+{
   Serial.begin(115200);
   Serial.println("Receiver library test");
 
   initializeReceiver(LASTCHANNEL);   
   receiverXmitFactor = 1.0;
+  
+  resetMinMaxChannel();
+
+  channelName[XAXIS] = "Roll";
+  channelName[YAXIS] = "Pitch";
+  channelName[ZAXIS] = "Yaw";
+  channelName[THROTTLE] = "Throttle";
+  channelName[MODE] = "Mode";
+  channelName[AUX1] = "Aux1";
+  channelName[AUX2] = "Aux2";
+  channelName[AUX3] = "Aux3";
+  channelName[AUX4] = "Aux4";
+  channelName[AUX5] = "Aux5";
+
+  Serial.println("setup done");
 }
 
-void loop() {
-  
-  if((millis() - timer) > 50) // 20Hz
+void printChannel(const int i)
+{
+  Serial.print(channelName[i]);
+  Serial.print(": ");
+  Serial.print(receiverCommand[i]);
+  if (minReceiver >= 0)
   {
-    timer = millis();
+    Serial.print(" (");
+    Serial.print(minReceiver[i]);
+    Serial.print(",");
+    Serial.print(maxReceiver[i]);
+    const int diff = maxReceiver[i] - minReceiver[i];
+    Serial.print(",");
+    Serial.print(diff);
+    Serial.print(")");
+  }
+  Serial.print(" ");
+}
+
+#define RESET_SECS 5
+#define MILLIS_PER_SEC 1000
+#define RESET_MILLIS (RESET_SECS * 1000)
+
+void loop() 
+{
+  const unsigned long now = millis();
+
+  //if ((now - fastTimer) >= 50) // 20Hz
+  if ((now - fastTimer) >= 100)
+  {
+    fastTimer = now;
    
     #if defined(sBus)
       readSBUS();
     #endif
-    
-    readReceiver();
-    
-    Serial.print("Throttle: ");
-    Serial.print(receiverCommand[THROTTLE]);
-    Serial.print(" Yaw: ");
-    Serial.print(receiverCommand[ZAXIS]);
-    Serial.print(" Roll: ");
-    Serial.print(receiverCommand[XAXIS]);
-    Serial.print(" Pitch: ");
-    Serial.print(receiverCommand[YAXIS]);
-    Serial.print(" Mode: ");
-    Serial.print(receiverCommand[MODE]);
-    Serial.print(" AUX1: ");
-    Serial.print(receiverCommand[AUX1]);
-    
-    if(LASTCHANNEL == 8 || LASTCHANNEL == 10)  {
-      
-      Serial.print(" AUX2: ");
-      Serial.print(receiverCommand[AUX2]);
-      Serial.print(" AUX3: ");
-      Serial.print(receiverCommand[AUX3]);
 
-      if (LASTCHANNEL == 10)  {
-
-        Serial.print(" AUX4: ");
-        Serial.print(receiverCommand[AUX4]);
-        Serial.print(" AUX5: ");
-        Serial.print(receiverCommand[AUX5]);
-      }
+    // readReceiver();
+    
+    for (int i = 0; i < LASTCHANNEL; ++i)
+    {
+      // const int v = receiverCommand[i];
+      const int v = receiverCommand[i] = getRawChannelValue(i);
+      if (v < minReceiver[i])
+        minReceiver[i] = v;
+      if (v > maxReceiver[i])
+        maxReceiver[i] = v;
+        
+      printChannel(i);
     }
-    
     Serial.println();
   }
+  
+  if ((now - slowTimer) >= RESET_MILLIS)
+  {
+    uint8_t sreg = SREG;
+    cli();
+    uint32_t isrs = isrCount;
+    isrCount = 0;
+    SREG = sreg;
+    
+    uint32_t freq = isrs / RESET_SECS;
+    
+    slowTimer = now;
+    resetMinMaxChannel();
+    Serial.println("\nMin/max reset");
+    Serial.print("Interrupts: ");
+    Serial.print(isrs);
+    Serial.print(", freq: ");
+    Serial.print(freq);
+    Serial.println("\n");
+  }
 }
+

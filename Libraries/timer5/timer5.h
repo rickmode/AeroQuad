@@ -11,6 +11,9 @@ extern "C" {
   with the highest resolution possible for this timer.
 */
 
+extern uint8_t clockSelectBits;
+extern uint8_t scale;
+
 // intialize timer with maximum needed duration
 void timer5_init(long microseconds);
 

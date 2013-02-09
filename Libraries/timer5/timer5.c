@@ -11,26 +11,34 @@ uint8_t scale = 0;
 void timer5_init(long microseconds)
 {
   TCCR5A = 0; // clear control register A 
-  TCCR5B = _BV(WGM13); // set mode as phase and frequency correct pwm, stop the timer
 
+  /*
+  TCCR5B = _BV(WGM53); // set mode as phase and frequency correct pwm, stop the timer
   // the counter runs backwards after TOP, interrupt is at BOTTOM so divide microseconds by 2 
   long cycles = (F_CPU * microseconds) / 2000000;
+  */
+
+  TCCR5B = _BV(WGM53) | _BV(WGM52) | _BV(WGM51); // mode 14 - Fast PWM, Top is ICR5, TOV5 set on ICR5
+  long cycles = (F_CPU * microseconds) / 1000000;
   
   if (cycles < RESOLUTION)
-    clockSelectBits = _BV(CS10);              // no prescale, full xtal
+    clockSelectBits = _BV(CS50);              // no prescale, full xtal
   else if((cycles >>= 3) < RESOLUTION)
-    clockSelectBits = _BV(CS11);              // prescale by /8
+    clockSelectBits = _BV(CS51);              // prescale by /8
   else if((cycles >>= 3) < RESOLUTION)
-    clockSelectBits = _BV(CS11) | _BV(CS10);  // prescale by /64
+    clockSelectBits = _BV(CS51) | _BV(CS50);  // prescale by /64
   else if((cycles >>= 2) < RESOLUTION)
-    clockSelectBits = _BV(CS12);              // prescale by /256
+    clockSelectBits = _BV(CS52);              // prescale by /256
   else if((cycles >>= 2) < RESOLUTION)
-    clockSelectBits = _BV(CS12) | _BV(CS10);  // prescale by /1024
+    clockSelectBits = _BV(CS52) | _BV(CS50);  // prescale by /1024
   else
-    cycles = RESOLUTION - 1, clockSelectBits = _BV(CS12) | _BV(CS10);  // request was out of bounds, set as maximum
+  {
+    cycles = RESOLUTION - 1;
+    clockSelectBits = _BV(CS52) | _BV(CS50);  // request was out of bounds, set as maximum
+  }
   
-  ICR5 = cycles;  // ICR is TOP in p & f correct pwm mode
-  TCCR5B &= ~(_BV(CS10) | _BV(CS11) | _BV(CS12));
+  ICR5 = cycles;  // ICR is TOP
+  TCCR5B &= ~(_BV(CS50) | _BV(CS51) | _BV(CS52));
   TCCR5B |= clockSelectBits; // reset clock select register
 
   switch (clockSelectBits)
@@ -60,7 +68,7 @@ void timer5_start()
 
 void timer5_stop()
 {
-  TCCR5B &= ~(_BV(CS10) | _BV(CS11) | _BV(CS12)); // clears all clock selects bits
+  TCCR5B &= ~(_BV(CS50) | _BV(CS51) | _BV(CS52)); // clears all clock selects bits
 }
 
 void timer5_reset()
@@ -68,31 +76,24 @@ void timer5_reset()
   TCNT5 = 0;
 }
 
-uint16_t timer5_safe_count()
-{
-  uint8_t sreg;
-  uint16_t t;
-
-  sreg = SREG; // save interrupt status registers
-  cli(); // stop interrupts
-  t = TCNT5;
-  SREG = sreg; // restore interrupts to prior status
-  
-  return t;
-}
-
 uint32_t timer5_micros()
 {
+  uint8_t sreg;
   uint32_t tmp;
   uint32_t count;
 
-  tmp = timer5_safe_count();
+  sreg = SREG; // save interrupt flag
+  cli(); // stop interrupts
+
+  tmp = TCNT5;
   do
   {
-    count = timer5_safe_count();
+    count = TCNT5;
   } while (count == tmp);
 
   tmp = ( (count > tmp) ? tmp : (uint32_t)(ICR5-count)+(uint32_t)ICR5);
+
+  SREG = sreg; // restore interrupt flag
   return ((tmp*1000UL)/(F_CPU /1000UL))<<scale;
 }
 
